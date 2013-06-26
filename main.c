@@ -2,10 +2,9 @@
  * vim:ts=4:sw=4:expandtab
  *
  */
-#define F_CPU 16000000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
-#define BAUD 38400
+#define BAUD 9600
 #include <util/setbaud.h>
 #include <util/delay.h>
 #include <util/twi.h>
@@ -15,6 +14,9 @@
 
 // True if measuring is going on to detect timer overflows
 volatile bool measuring = false;
+
+// true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
+volatile bool buffer_read = true;
 
 /**
  * Get the current direction of the 
@@ -74,6 +76,16 @@ void set_direction(uint8_t driver, bool dir) {
     }
 }
 
+
+bool stop(uint8_t motor) {
+    switch(motor) {
+        case 1: return PIND & (1<<6);
+        case 2: return PIND & (1<<3);
+        case 3: return PIND & (1<<4);
+    }
+    return true;
+}
+
 /**
  * Execute one step in the given direction.
  *
@@ -81,6 +93,9 @@ void set_direction(uint8_t driver, bool dir) {
  * @param direction Direction. True means up.
  */
 void step(uint8_t driver, bool direction) {
+    if (stop(driver) && !direction) {
+        return;
+    }
     set_direction(driver, direction);
     switch(driver) {
         case 1:
@@ -111,9 +126,6 @@ static void uart_puts(const char *str);
 
 // Timer 0 overflow
 ISR(TIMER1_OVF_vect) {
-    if (measuring) {
-        uart_puts("FATAL: TIMER OVERFLOW WHILE MEASURING\r\n");
-    }
 }
 
 // Timer 1 overflow
@@ -224,13 +236,27 @@ uint16_t ADC_Read( uint8_t channel ) {
     return ADCW;                    // ADC auslesen und zurückgeben
 }
 
-#define buffer_size 100
-uint16_t buffer[buffer_size];
+#define buffer_size 16
+uint8_t buffer[buffer_size];
+volatile uint8_t buffer_index;
 
 // Receive data via USART
 ISR(USART0_RX_vect) {
     uint8_t byte = UDR0;
+    if (!buffer_read) {
+        return;
+    }
+    if (byte == '\r' || byte == '\n') {
+        buffer[buffer_index] = 0;
+        buffer_index = 0;
+        buffer_read = false;
+    }
+    else {
+        buffer[buffer_index] = byte;
+        buffer_index++;
+    }
 }
+
 
 int main() {
     UBRR0H = UBRRH_VALUE;
@@ -250,8 +276,8 @@ int main() {
 
     // Configure PD2 as input
     DDRD = 0;
-    // Enable pullup for PD2
-    PORTD = (1<<2);
+    // Enable pullup for PD2, 6, 4, 3
+    PORTD = (1<<2) | (1<<3) | (1<<4) | (1<<6);
 
     // Configure PC0 and PC1 as output
     DDRC |= (1 << 0 | 1 << 1);
@@ -287,10 +313,16 @@ int main() {
 
     int16_t i, j;
     for(i = 0;;i++){
-        step(1,true);
-        step(2,true);
-        step(3,true);
+        step(1,false);
+        step(2,false);
+        step(3,false);
         _delay_us(400);
+        if (!buffer_read) {
+            uart_puts("Received buffer:\r\n");
+            uart_puts(buffer);
+            uart_puts("\r\n");
+            buffer_read = true;
+        }
     }
 
 }

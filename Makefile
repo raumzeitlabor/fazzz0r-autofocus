@@ -1,5 +1,5 @@
 CC=avr-gcc
-CFLAGS += -DF_CPU=16000000UL
+CFLAGS += -DF_CPU=12000000UL
 CFLAGS += -mmcu=atmega644
 CFLAGS += -Os
 MCU=atmega644
