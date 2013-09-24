@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <avr/wdt.h>
 
 // True if measuring is going on to detect timer overflows
 volatile bool measuring = false;
@@ -18,8 +19,11 @@ volatile bool measuring = false;
 // true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
 volatile bool buffer_read = true;
 
+// Positions of the 3 achsis relative to the endstop.
+int32_t positions[4];
+
 /**
- * Get the current direction of the 
+ * Get the current direction of the stepper driver. True means up.
  */
 bool get_direction(uint8_t driver) {
     switch(driver) {
@@ -76,7 +80,11 @@ void set_direction(uint8_t driver, bool dir) {
     }
 }
 
-
+/** 
+ * Check if a endstop has been reached. True means yes.
+ *
+ * @param motor 
+ */
 bool stop(uint8_t motor) {
     switch(motor) {
         case 1: return PIND & (1<<6);
@@ -93,8 +101,17 @@ bool stop(uint8_t motor) {
  * @param direction Direction. True means up.
  */
 void step(uint8_t driver, bool direction) {
+    if (driver < 1 || driver > 3) {
+        return;
+    }
     if (stop(driver) && !direction) {
         return;
+    }
+    if (direction) {
+        positions[driver]++;
+    }
+    else {
+        positions[driver]--;
     }
     set_direction(driver, direction);
     switch(driver) {
@@ -121,6 +138,31 @@ void step(uint8_t driver, bool direction) {
             break;
     }
 }
+
+// Execute one step up
+void stepUp(uint8_t driver) {
+    step(driver, true);
+}
+
+// Execute one step up for each motor
+void stepAllUp() {
+    stepUp(1);
+    stepUp(2);
+    stepUp(3);
+}
+
+// Execute one step down
+void stepDown(uint8_t driver) {
+    step(driver, false);
+}
+
+// Execute one step up for each motor
+void stepAllDown() {
+    stepDown(1);
+    stepDown(2);
+    stepDown(3);
+}
+
 
 static void uart_puts(const char *str);
 
@@ -165,6 +207,18 @@ static void uart_hex8(uint8_t i) {
 
 static void uart_hex16(uint16_t i) {
     char chars[] = {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
+    uart_put(chars[0xf & (i >> 12)]);
+    uart_put(chars[0xf & (i >>  8)]);
+    uart_put(chars[0xf & (i >>  4)]);
+    uart_put(chars[0xf & i]);
+}
+
+static void uart_hex32(uint32_t i) {
+    char chars[] = {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
+    uart_put(chars[0xf & (i >> 28)]);
+    uart_put(chars[0xf & (i >> 24)]);
+    uart_put(chars[0xf & (i >> 20)]);
+    uart_put(chars[0xf & (i >> 16)]);
     uart_put(chars[0xf & (i >> 12)]);
     uart_put(chars[0xf & (i >>  8)]);
     uart_put(chars[0xf & (i >>  4)]);
@@ -257,6 +311,93 @@ ISR(USART0_RX_vect) {
     }
 }
 
+void gotoEndstops() {
+    int i = 0;
+    // Count the number of steps until endstop
+    uint32_t steps[3];
+    steps[0] = steps[1] = steps[2] = 0;
+    while (!stop(1) || !stop(2) || !stop(3)) {
+        double moved = false;
+        for (i = 1; i <= 3; i++) {
+            if (!stop(i)) {
+                moved = true;
+                step(i, false);
+                steps[i-1]++;
+            }
+        }
+        if (!moved) {
+            break;
+        }
+        _delay_us(400);
+        wdt_reset();
+    }
+    uart_puts("Steps until endstop: ");
+    for (i = 0; i < 3; i++) {
+        uart_hex32(steps[i]);
+        uart_puts(" ");
+    }
+    uart_puts("\r\n");
+
+}
+
+void leaveEndstops() {
+    int i = 0;
+    while (stop(1) || stop(2) || stop(3)) {
+        double moved = false;
+        for (i = 1; i <= 3; i++) {
+            if (!stop(i)) {
+                moved = true;
+                step(i, true);
+            }
+        }
+        if (!moved) {
+            break;
+        }
+        _delay_us(400);
+        wdt_reset();
+    }
+}
+
+// go <limit> steps up
+void goUp(const int limit) {
+    int i = 0;
+    int j = 0;
+    for (j=0; j < limit; j++) {
+        double moved = false;
+        for (i = 1; i <= 3; i++) {
+            step(i, true);
+        }
+        _delay_us(400);
+        wdt_reset();
+    }
+}
+
+// True if user pressed button for moving up.
+bool buttonUp() {
+    return !(bool)(PINC & (1<<7));
+}
+
+// True if user pressed button for moving down.
+bool buttonDown() {
+    return !(bool)(PINC & (1<<6));
+}
+
+// True if user pressed button for tilting front down.
+bool buttonTiltFrontDown() {
+    return !(bool)(PINC & (1<<5));
+}
+
+// True if user pressed button for tilting front up.
+bool buttonTiltFrontUp() {
+    return !(bool)(PINC & (1<<4));
+}
+
+// True if user pressed button for leveling.
+bool buttonLevel() {
+    return !(bool)(PINC & (1<<3));
+}
+
+
 
 int main() {
     UBRR0H = UBRRH_VALUE;
@@ -283,6 +424,9 @@ int main() {
     DDRC |= (1 << 0 | 1 << 1);
     PORTC = 0;
 
+    // Configure PC3-7 as input with pullups enabled
+    PORTC |= (1<<3 | 1<<4 | 1<<5 | 1<<6 | 1<<7);
+
     // Enable INT0 interrupts
     EIMSK = (1<<INT0);
 
@@ -306,22 +450,88 @@ int main() {
 
     DDRA |= (1<<7);
     PORTA |= (1<<7);
+    int16_t i, j;
+
+    for (i = 0; i < 4; i++) {
+        positions[i] = 0;
+    }
 
 
     // enable drivers
     enable();    
 
-    int16_t i, j;
+    wdt_enable(WDTO_2S);
+
+
+    uart_puts("Starting up\r\n"); 
+
+    gotoEndstops();
+    goUp(300);
+    gotoEndstops();
+
+
+
     for(i = 0;;i++){
-        step(1,false);
-        step(2,false);
-        step(3,false);
-        _delay_us(400);
+        wdt_reset();
+        _delay_us(200);
         if (!buffer_read) {
             uart_puts("Received buffer:\r\n");
             uart_puts(buffer);
             uart_puts("\r\n");
             buffer_read = true;
+        }
+        int8_t buttons = 0;
+        if (buttonUp()) {
+            buttons++;
+        }
+        if (buttonDown()) {
+            buttons++;
+        }
+        if (buttonTiltFrontUp()) {
+            buttons++;
+        }
+        if (buttonTiltFrontDown()) {
+            buttons++;
+        }
+        if (buttonLevel()) {
+            buttons++;
+        }
+        if (buttons == 1) {
+            if (buttonDown()) {
+                if (!stop(1) && !stop(2) && !stop(3)) {
+                    stepAllDown();
+                }
+            }
+            if (buttonUp()) {
+                stepAllUp();
+            }
+            if (buttonTiltFrontUp()) {
+                if (!stop(1) && !stop(2) && !stop(3)) {
+                    stepUp(3);
+                    stepDown(1);
+                }
+            }
+            if (buttonTiltFrontDown()) {
+                if (!stop(1) && !stop(2) && !stop(3)) {
+                    stepDown(3);
+                    stepUp(1);
+                }
+            }
+            if (buttonLevel()) {
+                if (!stop(1) && !stop(2) && !stop(3)) {
+                    if (positions[1] > positions[3]) {
+                       stepDown(1);
+                       stepUp(3); 
+                    }
+                    if (positions[1] < positions[3]) {
+                        stepDown(3);
+                        stepUp(1);
+                    }
+                } 
+            }
+        }
+        if (buttons > 1) {
+            uart_puts("Multiple buttons pressed\r\n");
         }
     }
 

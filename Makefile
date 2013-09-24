@@ -9,7 +9,7 @@ all: main.o
 	avr-size firmware
 
 clean:
-	rm firmware firmware.hex main.o
+	rm -f firmware firmware.hex main.o
 
 program:
 	avrdude -c usbasp -p ${MCU} -P usb -U flash:w:firmware.hex:i
