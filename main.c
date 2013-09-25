@@ -13,6 +13,9 @@
 #include <stdbool.h>
 #include <avr/wdt.h>
 
+#define TILT_LIMIT 40000
+#define HEIGHT_LIMIT 90000
+
 // True if measuring is going on to detect timer overflows
 volatile bool measuring = false;
 
@@ -46,6 +49,22 @@ void enable() {
     // Driver 3
     DDRA  |=  (1<<DDA0);
     PORTA &= ~(1<<DDA0);
+}
+
+// Test if one axis reached the height limit.
+bool heightLimitReached(uint8_t driver) {
+    if (driver < 1 || driver > 3) {
+        return true;
+    }
+    if (positions[driver] > HEIGHT_LIMIT) {
+        return true;
+    }
+    return false;
+}
+
+// Test of any of the three axis reached the height limit
+bool anyHeightLimitReached() {
+    return heightLimitReached(1) || heightLimitReached(2) || heightLimitReached(3);
 }
 
 /**
@@ -398,6 +417,14 @@ bool buttonLevel() {
 }
 
 
+void printPositions() {
+    uart_hex32(positions[1]);
+    uart_puts(" ");
+    uart_hex32(positions[2]);
+    uart_puts(" ");
+    uart_hex32(positions[3]);
+    uart_puts("\r\n");
+}
 
 int main() {
     UBRR0H = UBRRH_VALUE;
@@ -470,6 +497,7 @@ int main() {
     gotoEndstops();
 
 
+    bool buttonLastTime = false;
 
     for(i = 0;;i++){
         wdt_reset();
@@ -496,39 +524,48 @@ int main() {
         if (buttonLevel()) {
             buttons++;
         }
+        if (buttonLastTime && (buttons != 1)) {
+            printPositions();
+        }
         if (buttons == 1) {
+            buttonLastTime = true;
             if (buttonDown()) {
                 if (!stop(1) && !stop(2) && !stop(3)) {
                     stepAllDown();
                 }
             }
             if (buttonUp()) {
-                stepAllUp();
+                if (!anyHeightLimitReached()) {
+                    stepAllUp();
+                }
             }
             if (buttonTiltFrontUp()) {
-                if (!stop(1) && !stop(2) && !stop(3)) {
+                if (!stop(1) && !stop(2) && !stop(3) && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT)) {
                     stepUp(3);
                     stepDown(1);
                 }
             }
             if (buttonTiltFrontDown()) {
-                if (!stop(1) && !stop(2) && !stop(3)) {
+                if (!stop(1) && !stop(2) && !stop(3) && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT)) {
                     stepDown(3);
                     stepUp(1);
                 }
             }
             if (buttonLevel()) {
                 if (!stop(1) && !stop(2) && !stop(3)) {
-                    if (positions[1] > positions[3]) {
-                       stepDown(1);
-                       stepUp(3); 
+                    if (positions[1] > positions[3]+1) {
+                        stepDown(1);
+                        stepUp(3); 
                     }
-                    if (positions[1] < positions[3]) {
+                    else if (positions[1]+1 < positions[3]) {
                         stepDown(3);
                         stepUp(1);
                     }
                 } 
             }
+        }
+        else {
+            buttonLastTime = false;
         }
         if (buttons > 1) {
             uart_puts("Multiple buttons pressed\r\n");
