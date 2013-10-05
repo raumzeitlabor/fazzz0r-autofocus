@@ -13,11 +13,38 @@
 #include <stdbool.h>
 #include <avr/wdt.h>
 
+// Limit for tilting
 #define TILT_LIMIT 40000
+
+// Limit for height
 #define HEIGHT_LIMIT 90000
 
-// True if measuring is going on to detect timer overflows
-volatile bool measuring = false;
+// ADC value when the autofocus switch is pressed.
+// Significantly higher values mean broken cable.
+#define CLOSED_VALUE 671
+
+// ADC value when the autofocus switch is not pressed.
+// Significyntly lower values mean short circuit.
+#define OPEN_VALUE 318
+
+// Maximum difference between ADC value and OPEN_VALUE for which the autofocus switch is considered open.
+// Values outside are considered proof of pressed switch, so moving up will not work.
+#define INTERVAL_SIZE 23
+
+// Lower ADC values will be consideres proof for short circuit.
+#define SHORT_CIRCUIT_VALUE 286
+
+// Higher ADC values will be consideres proof for broken cable.
+#define CABLE_BROKEN_VALUE 704
+
+// Delay between two steps in micro seconds when starting to move.
+#define INITIAL_DELAY 500
+
+// Shortest delay between two steps allowed (i.e. fastest movement).
+#define MIN_DELAY 40
+
+// Distance between a hit of the focus switch and the point of focus.
+#define FOCUS_DISTANCE 3200*4
 
 // true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
 volatile bool buffer_read = true;
@@ -39,6 +66,7 @@ bool get_direction(uint8_t driver) {
     }
 }
 
+// Set the output pins for the three motor drivers.
 void enable() {
     // Driver 1
     DDRC  |=  (1<<DDC2);
@@ -111,6 +139,13 @@ bool stop(uint8_t motor) {
         case 3: return PIND & (1<<4);
     }
     return true;
+}
+
+/*!
+ * Check if any of the endstops has been reached. True means yes.
+ */
+bool anyStopReached() {
+    return stop(1) || stop(2) || stop(3);
 }
 
 /**
@@ -275,16 +310,9 @@ static void uart_bin(uint8_t i) {
     uart_puts((i & 1) ? "1":"0");
 }
 
-void enableLED() {
-    DDRA |= (1<<4);
-    PORTA |= (1<<4);
-}
-
-void disableLED() {
-    DDRA |= (1<<4);
-    PORTA &= ~(1<<4);
-}
-
+/*!
+ * Initialize the ADC
+ */
 void adcInit() {
 
     // Set AVCC as reference
@@ -296,19 +324,32 @@ void adcInit() {
     ADCSRA = (1<<ADEN) | (1<<ADSC) | (0<<ADPS2) | (0<<ADPS1) | (0<<ADPS0);
 }
 
-void adc_select_channel(uint8_t channel) {
+/*!
+ * Select the channel for the next conversion.
+ */
+void adc_select_channel(const uint8_t channel) {
     ADMUX = (ADMUX & ~(0x1F)) | (channel & 0x1F);
 }
 
-/* ADC Einzelmessung */
-uint16_t ADC_Read( uint8_t channel ) {
-    // Kanal waehlen, ohne andere Bits zu beeinflußen
-    ADCSRA |= (1<<ADSC);            // eine Wandlung "single conversion"
+/*!
+ * Start a conversion.
+ */
+void adc_start_conversion(const uint8_t channel) {
+    adc_select_channel(channel);
+    ADCSRA |= (1<<ADSC);          // single conversion
+}
+
+/*!
+ * Wait for the conversion to finish and return the result.
+ */
+uint16_t adc_wait() {
     while (ADCSRA & (1<<ADSC) ) {   // auf Abschluss der Konvertierung warten
     }
     return ADCW;                    // ADC auslesen und zurückgeben
 }
 
+
+// Buffer for receiving data via USART
 #define buffer_size 16
 uint8_t buffer[buffer_size];
 volatile uint8_t buffer_index;
@@ -330,6 +371,9 @@ ISR(USART0_RX_vect) {
     }
 }
 
+/*!
+ * Move down until all endstops are hit.
+ */
 void gotoEndstops() {
     int i = 0;
     // Count the number of steps until endstop
@@ -359,6 +403,9 @@ void gotoEndstops() {
 
 }
 
+/*!
+ * Move up until no endstops are hit.
+ */
 void leaveEndstops() {
     int i = 0;
     while (stop(1) || stop(2) || stop(3)) {
@@ -416,14 +463,22 @@ bool buttonLevel() {
     return !(bool)(PINC & (1<<3));
 }
 
-
+// Print the positions of the axis
 void printPositions() {
     uart_hex32(positions[1]);
     uart_puts(" ");
     uart_hex32(positions[2]);
     uart_puts(" ");
     uart_hex32(positions[3]);
-    uart_puts("\r\n");
+}
+
+/*!
+ * Simple delay function for which the time does not need to be known at compile time.
+ */
+void myDelayUs(uint16_t length) {
+    while (--length) {
+        _delay_us(1);
+    }
 }
 
 int main() {
@@ -475,8 +530,6 @@ int main() {
 
     adcInit();
 
-    DDRA |= (1<<7);
-    PORTA |= (1<<7);
     int16_t i, j;
 
     for (i = 0; i < 4; i++) {
@@ -498,10 +551,59 @@ int main() {
 
 
     bool buttonLastTime = false;
+    
+    // Set ADC used for switch as input and disable pullup
+    DDRA &= ~(1<<7 | 1<<6);
+    PORTA &= (1<<7 | 1<<6);
+
+    // Count the number of cycles the autofocus is stuck in mid-state
+    uint8_t mid_state_counter = 0;
+
+    // Count the number of successive movements in the same direction before increasing speed
+    uint16_t movement_counter = 0;
+
+    uint16_t current_delay = INITIAL_DELAY;
+
+    enum movement{NONE, UP, DOWN, TILT_DOWN, TILT_UP, LEVEL} last_movement, movement;
+    last_movement = NONE;
+    movement = NONE;
 
     for(i = 0;;i++){
         wdt_reset();
-        _delay_us(200);
+        adc_start_conversion(7);
+        myDelayUs(current_delay);
+        const uint16_t autofocus_result = adc_wait();
+        // True if autofocus endstop not yet hit.
+        const bool autofocus_clear = (autofocus_result <= OPEN_VALUE + INTERVAL_SIZE && autofocus_result >= OPEN_VALUE - INTERVAL_SIZE);
+        
+        if (!autofocus_clear) {
+            uart_puts("Autofocus hit at: ");
+            printPositions();
+            uart_puts("\r\n");
+            if (autofocus_result < SHORT_CIRCUIT_VALUE) {
+                uart_puts("Autofocus has short circuit, value is: ");
+                uart_hex16(autofocus_result);
+                uart_puts("\r\n");
+            }
+            else if (autofocus_result > CABLE_BROKEN_VALUE) {
+                uart_puts("Autofocus cable is broken, value is: ");
+                uart_hex16(autofocus_result);
+                uart_puts("\r\n");
+            }
+            else if(autofocus_result > OPEN_VALUE + INTERVAL_SIZE && autofocus_result < CLOSED_VALUE - INTERVAL_SIZE) {
+                if (mid_state_counter > 10) {
+                    uart_puts("Autofocus stuck in mid-state, value is: 0x");
+                    uart_hex16(autofocus_result);
+                    uart_puts("\r\n");
+                }
+                else {
+                    mid_state_counter++;
+                }
+            }
+        }
+        else {
+            mid_state_counter = 0;
+        }
         if (!buffer_read) {
             uart_puts("Received buffer:\r\n");
             uart_puts(buffer);
@@ -526,40 +628,48 @@ int main() {
         }
         if (buttonLastTime && (buttons != 1)) {
             printPositions();
+            uart_puts("\r\n");
         }
+        movement = NONE;
         if (buttons == 1) {
             buttonLastTime = true;
             if (buttonDown()) {
-                if (!stop(1) && !stop(2) && !stop(3)) {
+                if (!anyStopReached()) {
                     stepAllDown();
+                    movement = DOWN;
                 }
             }
             if (buttonUp()) {
-                if (!anyHeightLimitReached()) {
+                if (!anyHeightLimitReached() && autofocus_clear) {
                     stepAllUp();
+                    movement = UP;
                 }
             }
             if (buttonTiltFrontUp()) {
-                if (!stop(1) && !stop(2) && !stop(3) && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT)) {
+                if (!anyStopReached() && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT) && autofocus_clear) {
                     stepUp(3);
                     stepDown(1);
+                    movement = TILT_UP;
                 }
             }
             if (buttonTiltFrontDown()) {
-                if (!stop(1) && !stop(2) && !stop(3) && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT)) {
+                if (!anyStopReached() && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT) && autofocus_clear) {
                     stepDown(3);
                     stepUp(1);
+                    movement = TILT_DOWN;
                 }
             }
             if (buttonLevel()) {
-                if (!stop(1) && !stop(2) && !stop(3)) {
+                if (!anyStopReached() && autofocus_clear) {
                     if (positions[1] > positions[3]+1) {
                         stepDown(1);
-                        stepUp(3); 
+                        stepUp(3);
+                        movement = LEVEL;
                     }
                     else if (positions[1]+1 < positions[3]) {
                         stepDown(3);
                         stepUp(1);
+                        movement = LEVEL;
                     }
                 } 
             }
@@ -570,6 +680,21 @@ int main() {
         if (buttons > 1) {
             uart_puts("Multiple buttons pressed\r\n");
         }
+        if (movement == last_movement && movement != NONE) {
+            if (movement_counter > 400) {
+                current_delay--;
+                if (current_delay < MIN_DELAY) {
+                    current_delay = MIN_DELAY;
+                }
+                movement_counter = 0;
+            }
+            movement_counter += current_delay;
+        }
+        else {
+            current_delay = INITIAL_DELAY;
+            movement_counter = 0;
+        }
+        last_movement = movement;
     }
 
 }

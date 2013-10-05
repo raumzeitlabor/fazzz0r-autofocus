@@ -1,0 +1,6 @@
+set term svg
+set output "mixed.svg"
+
+set logscale y
+
+plot "mixedcount" with histeps title '' 
