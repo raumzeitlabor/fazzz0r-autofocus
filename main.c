@@ -49,8 +49,11 @@
 // true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
 volatile bool buffer_read = true;
 
-// Positions of the 3 achsis relative to the endstop.
+// Positions of the 3 achsis relative to the endstop. [0] has the "average position"
 int32_t positions[4];
+
+// "average position" (see above) of the autofocus switch
+int32_t autofocusPosition;
 
 /**
  * Get the current direction of the stepper driver. True means up.
@@ -203,6 +206,7 @@ void stepAllUp() {
     stepUp(1);
     stepUp(2);
     stepUp(3);
+	positions[0]++;
 }
 
 // Execute one step down
@@ -215,6 +219,7 @@ void stepAllDown() {
     stepDown(1);
     stepDown(2);
     stepDown(3);
+	positions[0]--;
 }
 
 
@@ -463,8 +468,15 @@ bool buttonLevel() {
     return !(bool)(PINC & (1<<3));
 }
 
+// True if the user wants to got to the autofocus position
+bool buttonFocus() {
+	return !(bool)(PINB & (1<<0));
+}
+
 // Print the positions of the axis
 void printPositions() {
+    uart_hex32(positions[0]);
+    uart_puts(" ");
     uart_hex32(positions[1]);
     uart_puts(" ");
     uart_hex32(positions[2]);
@@ -509,6 +521,10 @@ int main() {
     // Configure PC3-7 as input with pullups enabled
     PORTC |= (1<<3 | 1<<4 | 1<<5 | 1<<6 | 1<<7);
 
+	// Configure PB0 as input (gotoFocus button)
+	DDRB |= (1<<0);
+	PORTB |= (1<<0);
+
     // Enable INT0 interrupts
     EIMSK = (1<<INT0);
 
@@ -548,6 +564,10 @@ int main() {
     gotoEndstops();
     goUp(300);
     gotoEndstops();
+    
+	for (i = 0; i < 4; i++) {
+        positions[i] = 0;
+    }
 
 
     bool buttonLastTime = false;
@@ -568,6 +588,9 @@ int main() {
     last_movement = NONE;
     movement = NONE;
 
+	// Reset autofocus position
+	autofocusPosition = 0;
+
     for(i = 0;;i++){
         wdt_reset();
         adc_start_conversion(7);
@@ -579,6 +602,7 @@ int main() {
         if (!autofocus_clear) {
             uart_puts("Autofocus hit at: ");
             printPositions();
+			autofocusPosition = positions[0];
             uart_puts("\r\n");
             if (autofocus_result < SHORT_CIRCUIT_VALUE) {
                 uart_puts("Autofocus has short circuit, value is: ");
@@ -626,6 +650,9 @@ int main() {
         if (buttonLevel()) {
             buttons++;
         }
+		if (buttonFocus()) {
+			buttons++;
+		}
         if (buttonLastTime && (buttons != 1)) {
             printPositions();
             uart_puts("\r\n");
@@ -673,6 +700,12 @@ int main() {
                     }
                 } 
             }
+			if (buttonFocus()) {
+				if (positions[0] > autofocusPosition - FOCUS_DISTANCE) {
+					stepAllDown();
+					movement = DOWN;
+				}
+			}
         }
         else {
             buttonLastTime = false;
