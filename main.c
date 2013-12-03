@@ -561,9 +561,13 @@ int main() {
 
     uart_puts("Starting up\r\n"); 
 
+
     gotoEndstops();
+
+	uart_puts("Went to endstops once\r\n");
     goUp(300);
     gotoEndstops();
+	uart_puts("Went to endstops twice\r\n");
     
 	for (i = 0; i < 4; i++) {
         positions[i] = 0;
