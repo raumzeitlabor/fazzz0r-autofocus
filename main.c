@@ -705,7 +705,7 @@ int main() {
                 } 
             }
 			if (buttonFocus()) {
-				if (positions[0] > autofocusPosition - FOCUS_DISTANCE) {
+				if ((positions[0] > autofocusPosition - FOCUS_DISTANCE) && !anyStopReached()) {
 					stepAllDown();
 					movement = DOWN;
 				}
