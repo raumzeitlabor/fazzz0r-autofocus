@@ -25,7 +25,7 @@
 
 // ADC value when the autofocus switch is not pressed.
 // Significyntly lower values mean short circuit.
-#define OPEN_VALUE 318
+#define OPEN_VALUE 316
 
 // Maximum difference between ADC value and OPEN_VALUE for which the autofocus switch is considered open.
 // Values outside are considered proof of pressed switch, so moving up will not work.
@@ -35,7 +35,7 @@
 #define SHORT_CIRCUIT_VALUE 286
 
 // Higher ADC values will be consideres proof for broken cable.
-#define CABLE_BROKEN_VALUE 704
+#define CABLE_BROKEN_VALUE 770
 
 // Delay between two steps in micro seconds when starting to move.
 #define INITIAL_DELAY 500
@@ -392,11 +392,15 @@ void gotoEndstops() {
                 step(i, false);
                 steps[i-1]++;
             }
+			else {
+	//			uart_put('0'+i);
+			}
         }
+	//			uart_puts("\r\n");
         if (!moved) {
             break;
         }
-        _delay_us(400);
+        _delay_us(100);
         wdt_reset();
     }
     uart_puts("Steps until endstop: ");
@@ -445,27 +449,27 @@ void goUp(const int limit) {
 
 // True if user pressed button for moving up.
 bool buttonUp() {
-    return !(bool)(PINC & (1<<7));
+    return !(bool)(PINC & (1<<6));
 }
 
 // True if user pressed button for moving down.
 bool buttonDown() {
-    return !(bool)(PINC & (1<<6));
+    return !(bool)(PINC & (1<<4));
 }
 
 // True if user pressed button for tilting front down.
 bool buttonTiltFrontDown() {
-    return !(bool)(PINC & (1<<5));
+    return !(bool)(PINC & (1<<7));
 }
 
 // True if user pressed button for tilting front up.
 bool buttonTiltFrontUp() {
-    return !(bool)(PINC & (1<<4));
+    return !(bool)(PINC & (1<<3));
 }
 
 // True if user pressed button for leveling.
 bool buttonLevel() {
-    return !(bool)(PINC & (1<<3));
+    return !(bool)(PINC & (1<<5));
 }
 
 // True if the user wants to got to the autofocus position
@@ -522,7 +526,7 @@ int main() {
     PORTC |= (1<<3 | 1<<4 | 1<<5 | 1<<6 | 1<<7);
 
 	// Configure PB0 as input (gotoFocus button)
-	DDRB |= (1<<0);
+	DDRB &= ~(1<<0);
 	PORTB |= (1<<0);
 
     // Enable INT0 interrupts
@@ -565,7 +569,9 @@ int main() {
     gotoEndstops();
 
 	uart_puts("Went to endstops once\r\n");
-    goUp(300);
+	for (i=0; i < 10000 && (stop(1) || stop(2) || stop(3)); i++) {
+    	goUp(10);
+	}
     gotoEndstops();
 	uart_puts("Went to endstops twice\r\n");
     
@@ -595,144 +601,167 @@ int main() {
 	// Reset autofocus position
 	autofocusPosition = 0;
 
+/*
+	while(1) {  
+		adc_start_conversion(7);
+ 	    const uint16_t autofocus_result = adc_wait();
+		uart_hex16(autofocus_result);
+		wdt_reset();
+		uart_puts("\r\n");
+	}
+// */
+
+	uint8_t autofocus_hit_counter = 0;
+
     for(i = 0;;i++){
         wdt_reset();
         adc_start_conversion(7);
         myDelayUs(current_delay);
         const uint16_t autofocus_result = adc_wait();
         // True if autofocus endstop not yet hit.
-        const bool autofocus_clear = (autofocus_result <= OPEN_VALUE + INTERVAL_SIZE && autofocus_result >= OPEN_VALUE - INTERVAL_SIZE);
-        
-        if (!autofocus_clear) {
-            uart_puts("Autofocus hit at: ");
-            printPositions();
-			autofocusPosition = positions[0];
-            uart_puts("\r\n");
-            if (autofocus_result < SHORT_CIRCUIT_VALUE) {
-                uart_puts("Autofocus has short circuit, value is: ");
-                uart_hex16(autofocus_result);
-                uart_puts("\r\n");
-            }
-            else if (autofocus_result > CABLE_BROKEN_VALUE) {
-                uart_puts("Autofocus cable is broken, value is: ");
-                uart_hex16(autofocus_result);
-                uart_puts("\r\n");
-            }
-            else if(autofocus_result > OPEN_VALUE + INTERVAL_SIZE && autofocus_result < CLOSED_VALUE - INTERVAL_SIZE) {
-                if (mid_state_counter > 10) {
-                    uart_puts("Autofocus stuck in mid-state, value is: 0x");
-                    uart_hex16(autofocus_result);
-                    uart_puts("\r\n");
-                }
-                else {
-                    mid_state_counter++;
-                }
-            }
-        }
-        else {
-            mid_state_counter = 0;
-        }
-        if (!buffer_read) {
-            uart_puts("Received buffer:\r\n");
-            uart_puts(buffer);
-            uart_puts("\r\n");
-            buffer_read = true;
-        }
-        int8_t buttons = 0;
-        if (buttonUp()) {
-            buttons++;
-        }
-        if (buttonDown()) {
-            buttons++;
-        }
-        if (buttonTiltFrontUp()) {
-            buttons++;
-        }
-        if (buttonTiltFrontDown()) {
-            buttons++;
-        }
-        if (buttonLevel()) {
-            buttons++;
-        }
+        const bool autofocus_switch_clear = (autofocus_result <= OPEN_VALUE + INTERVAL_SIZE && autofocus_result >= OPEN_VALUE - INTERVAL_SIZE);
+        bool autofocus_clear = true;
+
+		if (!autofocus_switch_clear) {
+			if (autofocus_hit_counter > 10) {
+				autofocus_clear = false;
+				if (i % 1000 == 0) {
+					uart_puts("Autofocus hit at: ");
+					printPositions();
+					autofocusPosition = positions[0];
+					uart_puts("\r\n");
+				}
+				if (autofocus_result < SHORT_CIRCUIT_VALUE) {
+					uart_puts("Autofocus has short circuit, value is: ");
+					uart_hex16(autofocus_result);
+					uart_puts("\r\n");
+				}
+				else if (autofocus_result > CABLE_BROKEN_VALUE) {
+					uart_puts("Autofocus cable is broken, value is: ");
+					uart_hex16(autofocus_result);
+					uart_puts("\r\n");
+				}
+				else if(autofocus_result > OPEN_VALUE + INTERVAL_SIZE && autofocus_result < CLOSED_VALUE - INTERVAL_SIZE) {
+					if (mid_state_counter > 10) {
+						uart_puts("Autofocus stuck in mid-state, value is: 0x");
+						uart_hex16(autofocus_result);
+						uart_puts("\r\n");
+					}
+					else {
+						mid_state_counter++;
+					}
+				}
+			}
+			// Increment autofocus_hit_counter in order to detect series of hit autofocus.
+			if (autofocus_hit_counter < 20) {
+				autofocus_hit_counter++;
+			}
+		}
+		else {
+			mid_state_counter = 0;
+			autofocus_hit_counter = 0;
+		}
+		if (!buffer_read) {
+			uart_puts("Received buffer:\r\n");
+			uart_puts(buffer);
+			uart_puts("\r\n");
+			buffer_read = true;
+		}
+		int8_t buttons = 0;
+		if (buttonUp()) {
+			buttons++;
+		}
+		if (buttonDown()) {
+			buttons++;
+		}
+		if (buttonTiltFrontUp()) {
+			buttons++;
+		}
+		if (buttonTiltFrontDown()) {
+			buttons++;
+		}
+		if (buttonLevel()) {
+			buttons++;
+		}
 		if (buttonFocus()) {
 			buttons++;
 		}
-        if (buttonLastTime && (buttons != 1)) {
-            printPositions();
-            uart_puts("\r\n");
-        }
-        movement = NONE;
-        if (buttons == 1) {
-            buttonLastTime = true;
-            if (buttonDown()) {
-                if (!anyStopReached()) {
-                    stepAllDown();
-                    movement = DOWN;
-                }
-            }
-            if (buttonUp()) {
-                if (!anyHeightLimitReached() && autofocus_clear) {
-                    stepAllUp();
-                    movement = UP;
-                }
-            }
-            if (buttonTiltFrontUp()) {
-                if (!anyStopReached() && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT) && autofocus_clear) {
-                    stepUp(3);
-                    stepDown(1);
-                    movement = TILT_UP;
-                }
-            }
-            if (buttonTiltFrontDown()) {
-                if (!anyStopReached() && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT) && autofocus_clear) {
-                    stepDown(3);
-                    stepUp(1);
-                    movement = TILT_DOWN;
-                }
-            }
-            if (buttonLevel()) {
-                if (!anyStopReached() && autofocus_clear) {
-                    if (positions[1] > positions[3]+1) {
-                        stepDown(1);
-                        stepUp(3);
-                        movement = LEVEL;
-                    }
-                    else if (positions[1]+1 < positions[3]) {
-                        stepDown(3);
-                        stepUp(1);
-                        movement = LEVEL;
-                    }
-                } 
-            }
+		if (buttonLastTime && (buttons != 1)) {
+			printPositions();
+			uart_puts("\r\n");
+		}
+		movement = NONE;
+		if (buttons == 1) {
+			buttonLastTime = true;
+			if (buttonDown()) {
+				if (!anyStopReached()) {
+					stepAllDown();
+					movement = DOWN;
+				}
+			}
+			if (buttonUp()) {
+				if (!anyHeightLimitReached() && autofocus_clear) {
+					stepAllUp();
+					movement = UP;
+				}
+			}
+			if (buttonTiltFrontUp()) {
+				if (!anyStopReached() && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT) && autofocus_clear) {
+					stepUp(3);
+					stepDown(1);
+					movement = TILT_UP;
+				}
+			}
+			if (buttonTiltFrontDown()) {
+				if (!anyStopReached() && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT) && autofocus_clear) {
+					stepDown(3);
+					stepUp(1);
+					movement = TILT_DOWN;
+				}
+			}
+			if (buttonLevel()) {
+				if (!anyStopReached() && autofocus_clear) {
+					if (positions[1] > positions[3]+1) {
+						stepDown(1);
+						stepUp(3);
+						movement = LEVEL;
+					}
+					else if (positions[1]+1 < positions[3]) {
+						stepDown(3);
+						stepUp(1);
+						movement = LEVEL;
+					}
+				} 
+			}
 			if (buttonFocus()) {
 				if ((positions[0] > autofocusPosition - FOCUS_DISTANCE) && !anyStopReached()) {
 					stepAllDown();
 					movement = DOWN;
 				}
 			}
-        }
-        else {
-            buttonLastTime = false;
-        }
-        if (buttons > 1) {
-            uart_puts("Multiple buttons pressed\r\n");
-        }
-        if (movement == last_movement && movement != NONE) {
-            if (movement_counter > 400) {
-                current_delay--;
-                if (current_delay < MIN_DELAY) {
-                    current_delay = MIN_DELAY;
-                }
-                movement_counter = 0;
-            }
-            movement_counter += current_delay;
-        }
-        else {
-            current_delay = INITIAL_DELAY;
-            movement_counter = 0;
-        }
-        last_movement = movement;
-    }
+		}
+		else {
+			buttonLastTime = false;
+		}
+		if (buttons > 1) {
+			uart_puts("Multiple buttons pressed\r\n");
+		}
+		if (movement == last_movement && movement != NONE) {
+			if (movement_counter > 400) {
+				current_delay--;
+				if (current_delay < MIN_DELAY) {
+					current_delay = MIN_DELAY;
+				}
+				movement_counter = 0;
+			}
+			movement_counter += current_delay;
+		}
+		else {
+			current_delay = INITIAL_DELAY;
+			movement_counter = 0;
+		}
+		last_movement = movement;
+	}
 
 }
 
