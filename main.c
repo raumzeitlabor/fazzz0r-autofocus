@@ -13,6 +13,9 @@
 #include <stdbool.h>
 #include <avr/wdt.h>
 
+// The thread pitch is 1.75mm per revolution (M12)
+// 3200 steps are 1 revolution
+
 // Limit for tilting
 #define TILT_LIMIT 40000
 
@@ -44,7 +47,9 @@
 #define MIN_DELAY 40
 
 // Distance between a hit of the focus switch and the point of focus.
-#define FOCUS_DISTANCE 3200*4
+// #define FOCUS_DISTANCE 17444
+// Make the focus point 4mm higher
+#define FOCUS_DISTANCE 10130
 
 // true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
 volatile bool buffer_read = true;
@@ -574,11 +579,45 @@ int main() {
 	}
     gotoEndstops();
 	uart_puts("Went to endstops twice\r\n");
-    
+
+	for (i=0; i < 10000 && (stop(1) || stop(2) || stop(3)); i++) {
+    	goUp(10);
+	}
+    gotoEndstops();
+	uart_puts("Went to endstops three times\r\n");
+
+	for (i=0; i < 10000 && (stop(1) || stop(2) || stop(3)); i++) {
+    	goUp(10);
+	}
+    gotoEndstops();
+	uart_puts("Went to endstops four times\r\n");
+
 	for (i = 0; i < 4; i++) {
         positions[i] = 0;
     }
+	
+	#define MOTOR_1_OFFSET 0
+	#define MOTOR_2_OFFSET 2754
+	#define MOTOR_3_OFFSET 2165
+    
+	#define MOTOR_MAX_OFFSET 4000
 
+	for (i = 0; i < MOTOR_MAX_OFFSET; i++) {
+		if (positions[1] < MOTOR_1_OFFSET) {
+			stepUp(1);
+		}
+		if (positions[2] < MOTOR_2_OFFSET) {
+			stepUp(2);
+		}
+		if (positions[3] < MOTOR_3_OFFSET) {
+			stepUp(3);
+		}
+		_delay_us(100);
+	}
+
+	for (i = 0; i < 4; i++) {
+        positions[i] = 0;
+    }
 
     bool buttonLastTime = false;
     
