@@ -47,9 +47,7 @@
 #define MIN_DELAY 40
 
 // Distance between a hit of the focus switch and the point of focus.
-// #define FOCUS_DISTANCE 17444
-// Make the focus point 4mm higher
-#define FOCUS_DISTANCE 10130
+#define FOCUS_DISTANCE 10814
 
 // true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
 volatile bool buffer_read = true;
