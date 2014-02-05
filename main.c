@@ -20,7 +20,7 @@
 #define TILT_LIMIT 40000
 
 // Limit for height
-#define HEIGHT_LIMIT 90000
+#define HEIGHT_LIMIT 95000
 
 // ADC value when the autofocus switch is pressed.
 // Significantly higher values mean broken cable.
