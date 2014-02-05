@@ -41,7 +41,7 @@
 #define CABLE_BROKEN_VALUE 770
 
 // Delay between two steps in micro seconds when starting to move.
-#define INITIAL_DELAY 500
+#define INITIAL_DELAY 100
 
 // Shortest delay between two steps allowed (i.e. fastest movement).
 #define MIN_DELAY 40
@@ -58,6 +58,13 @@ int32_t positions[4];
 // "average position" (see above) of the autofocus switch
 int32_t autofocusPosition;
 
+#define MOTOR_1_OFFSET 0
+#define MOTOR_2_OFFSET 2754
+#define MOTOR_3_OFFSET 2165
+
+#define MOTOR_MAX_OFFSET 4000
+
+
 /**
  * Get the current direction of the stepper driver. True means up.
  */
@@ -72,7 +79,13 @@ bool get_direction(uint8_t driver) {
 	}
 }
 
-bool moveAfterReset();
+int32_t max(int32_t a, int32_t b) {
+	if (a>b) {
+		return a;
+	}
+	return b;
+}
+
 
 // Set the output pins for the three motor drivers.
 void enable() {
@@ -387,35 +400,29 @@ ISR(USART0_RX_vect) {
 void gotoEndstops() {
 	int i = 0;
 	// Count the number of steps until endstop
-	uint32_t steps[3];
-	steps[0] = steps[1] = steps[2] = 0;
-	while (!stop(1) || !stop(2) || !stop(3)) {
-		if (moveAfterReset()) {
-			double moved = false;
-			for (i = 1; i <= 3; i++) {
-				if (!stop(i)) {
-					moved = true;
-					step(i, false);
-					steps[i-1]++;
-				}
-				else {
-					//			uart_put('0'+i);
+	if (!stop(1) || !stop(2) || !stop(3)) {
+		double moved = false;
+		for (i = 1; i <= 3; i++) {
+			if (!stop(i)) {
+				moved = true;
+				step(i, false);
+			}
+			else {
+				//			uart_put('0'+i);
+				switch (i) {
+					case 1: positions[1] = -MOTOR_1_OFFSET; break;
+					case 2: positions[2] = -MOTOR_2_OFFSET; break;
+					case 3: positions[3] = -MOTOR_3_OFFSET; break;
 				}
 			}
-			//			uart_puts("\r\n");
-			if (!moved) {
-				break;
-			}
-			_delay_us(100);
 		}
+		//			uart_puts("\r\n");
+		if (!moved) {
+			return;
+		}
+		//_delay_us(100);
 		wdt_reset();
 	}
-	uart_puts("Steps until endstop: ");
-	for (i = 0; i < 3; i++) {
-		uart_hex32(steps[i]);
-		uart_puts(" ");
-	}
-	uart_puts("\r\n");
 
 }
 
@@ -484,9 +491,9 @@ bool buttonFocus() {
 	return !(bool)(PINB & (1<<0));
 }
 
-bool moveAfterReset() {
-	return buttonUp() && buttonDown() && buttonFocus() &&
-		!buttonTiltFrontDown() && !buttonTiltFrontUp() && !buttonLevel();
+// True if user wants to do an emergency movement
+bool buttonEmergency() {
+	return !(bool)(PINB & (1<<1));
 }
 
 // Print the positions of the axis
@@ -541,6 +548,11 @@ int main() {
 	DDRB &= ~(1<<0);
 	PORTB |= (1<<0);
 
+	// Configure PB1 as input (emergency move button)
+	DDRB &= ~(1<<1);
+	PORTB |= (1<<1);
+
+
 	// Enable INT0 interrupts
 	EIMSK = (1<<INT0);
 
@@ -576,7 +588,7 @@ int main() {
 
 
 	uart_puts("Starting up\r\n"); 
-
+/*
 
 	gotoEndstops();
 
@@ -612,12 +624,6 @@ int main() {
 		positions[i] = 0;
 	}
 
-#define MOTOR_1_OFFSET 0
-#define MOTOR_2_OFFSET 2754
-#define MOTOR_3_OFFSET 2165
-
-#define MOTOR_MAX_OFFSET 4000
-
 	for (i = 0; i < MOTOR_MAX_OFFSET; i++) {
 		if (moveAfterReset()) {
 			if (positions[1] < MOTOR_1_OFFSET) {
@@ -633,7 +639,7 @@ int main() {
 		}
 		wdt_reset();
 	}
-
+*/
 	for (i = 0; i < 4; i++) {
 		positions[i] = 0;
 	}
@@ -749,7 +755,7 @@ int main() {
 			uart_puts("\r\n");
 		}
 		movement = NONE;
-		if (buttons == 1) {
+		if (buttons == 1 && !buttonEmergency()) {
 			buttonLastTime = true;
 			if (buttonDown()) {
 				if (!anyStopReached()) {
@@ -801,9 +807,11 @@ int main() {
 		else {
 			buttonLastTime = false;
 		}
+		/*
 		if (buttons > 1) {
 			uart_puts("Multiple buttons pressed\r\n");
 		}
+		*/
 		if (movement == last_movement && movement != NONE) {
 			if (movement_counter > 400) {
 				current_delay--;
@@ -818,6 +826,50 @@ int main() {
 			current_delay = INITIAL_DELAY;
 			movement_counter = 0;
 		}
+
+		// Do all the emergency stuff
+		if (buttonEmergency()) {
+			if (buttonEmergency() && buttonFocus()) {
+				gotoEndstops();
+			}
+			if (buttonUp()) {
+				if (buttonTiltFrontDown()) {
+					stepUp(1);
+				}
+				if (buttonLevel()) {
+					stepUp(2);
+				}
+				if (buttonTiltFrontUp()) {
+					stepUp(3);
+				}
+			}
+			if (buttonDown()) {
+				if (buttonTiltFrontDown()) {
+					stepDown(1);
+				}
+				if (buttonLevel()) {
+					stepDown(2);
+				}
+				if (buttonTiltFrontUp()) {
+					stepDown(3);
+				}
+				
+			}
+			if (buttonLevel()) {
+				int32_t maxPosition = max(positions[1], max(positions[2], positions[3]));
+				if (positions[1] < maxPosition) {
+					stepUp(1);
+				}
+				if (positions[2] < maxPosition) {
+					stepUp(2);
+				}
+				if (positions[3] < maxPosition) {
+					stepUp(3);
+				}
+			}
+			
+		}
+
 		last_movement = movement;
 	}
 
