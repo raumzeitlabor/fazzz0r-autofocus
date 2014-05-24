@@ -13,14 +13,18 @@
 #include <stdbool.h>
 #include <avr/wdt.h>
 
+//#define DEBUG 1
+
+#define BUTTONCOUNT 1
+
 // The thread pitch is 1.75mm per revolution (M12)
 // 3200 steps are 1 revolution
 
 // Limit for tilting
-#define TILT_LIMIT 40000
+#define TILT_LIMIT 80000
 
 // Limit for height
-#define HEIGHT_LIMIT 95000
+#define HEIGHT_LIMIT 190000
 
 // ADC value when the autofocus switch is pressed.
 // Significantly higher values mean broken cable.
@@ -47,7 +51,7 @@
 #define MIN_DELAY 1
 
 // Distance between a hit of the focus switch and the point of focus.
-#define FOCUS_DISTANCE 10814
+#define FOCUS_DISTANCE 21628
 
 // true if the USART-Receive-Buffer was completely read by the main loop. Set to false when buffer full by usart-receive-interrupt.
 volatile bool buffer_read = true;
@@ -58,6 +62,14 @@ int32_t positions[4];
 // "average position" (see above) of the autofocus switch
 int32_t autofocusPosition;
 
+#define setStep1 {PORTC |= (1<<PC1);}
+#define setStep2 {PORTC |= (1<<PC3);}
+#define setStep3 {PORTC |= (1<<PC5);}
+
+#define unsetStep1 {PORTC &= ~(1<<PC1);}
+#define unsetStep2 {PORTC &= ~(1<<PC3);}
+#define unsetStep3 {PORTC &= ~(1<<PC5);}
+
 #define MOTOR_1_OFFSET 0
 #define MOTOR_2_OFFSET 2754
 #define MOTOR_3_OFFSET 2165
@@ -66,25 +78,31 @@ int32_t autofocusPosition;
 
 
 /**
- * Get the current direction of the stepper driver. True means up.
+ * Set the direction of a stepper driver
+ *
+ * @param direction the new direction. True means up.
  */
- /*
-bool get_direction(uint8_t driver) {
-	switch(driver) {
-		case 1:
-			return !(PORTC & (1<<PC0));
-		case 2:
-			return !(PORTA & (1<<PA5));
-		case 3:
-			return (PORTA & (1<<PA2));
-	}
+#define setDir1(dir) {\
+	if (dir) PORTC |= (1<<PC0); \
+	else PORTC &= ~(1<<PC0);\
+	_delay_us(1);\
 }
-*/
+#define setDir2(dir) {\
+	if (dir) PORTC |= (1<<PC2); \
+	else PORTC &= ~(1<<PC2);\
+	_delay_us(1);\
+}
+#define setDir3(dir) {\
+	if (dir) PORTC |= (1<<PC4); \
+	else PORTC &= ~(1<<PC4);\
+	_delay_us(1);\
+}
 
-#define get_direction1 (!PORTC & (1<<PC0))
-#define get_direction2 (!PORTA & (1<<PA5))
-#define get_direction3 (!PORTA & (1<<PA2))
+// Test if one axis reached the height limit.
+#define heightLimitReached(driver) (positions[driver] > HEIGHT_LIMIT) 
 
+// Test of any of the three axis reached the height limit
+#define anyHeightLimitReached() (heightLimitReached(1) || heightLimitReached(2) || heightLimitReached(3))
 
 int32_t max(int32_t a, int32_t b) {
 	if (a>b) {
@@ -94,177 +112,114 @@ int32_t max(int32_t a, int32_t b) {
 }
 
 
-// Set the output pins for the three motor drivers.
-void enable() {
-	// Driver 1
-	DDRC  |=  (1<<DDC2);
-	PORTC &= ~(1<<PC2);
-	// Driver 2
-	DDRA  |=  (1<<DDA3);
-	PORTA &= ~(1<<DDA3);
-	// Driver 3
-	DDRA  |=  (1<<DDA0);
-	PORTA &= ~(1<<DDA0);
-}
-
-// Test if one axis reached the height limit.
-bool heightLimitReached(uint8_t driver) {
-	if (driver < 1 || driver > 3) {
-		return true;
-	}
-	if (positions[driver] > HEIGHT_LIMIT) {
-		return true;
-	}
-	return false;
-}
-
-// Test of any of the three axis reached the height limit
-bool anyHeightLimitReached() {
-	return heightLimitReached(1) || heightLimitReached(2) || heightLimitReached(3);
-}
-
-/**
- * Set the direction of a stepper driver
- *
- * @param driver index of the driver (1-3)
- * @param direction the new direction. True means up.
- */
-#define set_direction(driver,dir) {\
-	switch(driver) {\
-		case 1:\
-			DDRC |= (1<<DDC0);\
-			if (dir != get_direction1) {\
-				PORTC ^= (1<<PC0);\
-				_delay_us(1);\
-			}\
-			break;\
-		case 2:\
-			DDRA |= (1<<DDA5);\
-			if (dir != get_direction2) {\
-				PORTA ^= (1<<PA5);\
-				_delay_us(1);\
-			}\
-			break;\
-		case 3:\
-			DDRA |= (1<<DDA2);\
-			if (dir != get_direction3) {\
-				PORTA ^= (1<<PA2);\
-				_delay_us(1);\
-			}\
-			break;\
-	}\
-}
-
 /** 
  * Check if a endstop has been reached. True means yes.
- *
- * @param motor 
  */
-bool stop(uint8_t motor) {
-	switch(motor) {
-		case 1: return PIND & (1<<6);
-		case 2: return PIND & (1<<3);
-		case 3: return PIND & (1<<4);
-	}
-	return true;
-}
+#define stop1 ((bool)(PINA & (1<<PA1)))
+#define stop2 ((bool)(PINA & (1<<PA2)))
+#define stop3 ((bool)(PINA & (1<<PA3)))
+
+#define fault1 ((bool)(PINA & (1<<PA5)))
+#define fault2 ((bool)(PINA & (1<<PA6)))
+#define fault3 ((bool)(PINA & (1<<PA7)))
+#define sleeping (!(bool)(PIND & (1<<PD7)))
+#define sleep()  {PORTD &= ~(1<<PD7); DDRD  |= (1<<PD7);}
+#define wakeup() {DDRD  &= ~(1<<PD7); PORTD |= (1<<PD7);}
 
 /*!
  * Check if any of the endstops has been reached. True means yes.
  */
-#define anyStopReached() (stop(1) || stop(2) || stop(3))
+#define anyStopReached() (stop1 || stop2 || stop3)
 
-/**
- * Execute one step in the given direction.
- *
- * @param driver index of the stepper driver (1-3)
- * @param direction Direction. True means up.
- */
-void step(uint8_t driver, bool direction) {
-	if (stop(driver) && !direction) {
-		return;
-	}
-	if (direction) {
-		positions[driver]++;
-	}
-	else {
-		positions[driver]--;
-	}
-	set_direction(driver, direction);
-	switch(driver) {
-		case 1:
-			DDRC   |= (1<<DDC1);
-			PORTC  |= (1<<PC1);
-			_delay_us(2);
-			PORTC &= ~(1<<PC1);
-			break;
-		case 2:
-			DDRA   |= (1<<DDA4);
-			PORTA  |= (1<<PA4);
-			_delay_us(2);
-			PORTA &= ~(1<<PA4);
-			break;
-		case 3:
-			DDRA   |= (1<<DDA1);
-			PORTA  |= (1<<PA1);
-			_delay_us(2);
-			PORTA &= ~(1<<PA1);
-			break;
-	}
+#define stepUp1() { \
+	if (sleeping) {\
+		wakeup();\
+		_delay_ms(100);\
+	}\
+	if (!sleeping) {\
+		positions[1]++;\
+		setDir1(true);\
+		setStep1;\
+		_delay_us(2);\
+		unsetStep1;\
+	}\
 }
 
-
-// Execute one step up
-#define stepUp(driver) 	{step(driver, true);}
-
-#define step1up { \
-positions[1]++;\
-set_direction(1,true);\
-			DDRC   |= (1<<DDC1);\
-			PORTC  |= (1<<PC1);\
-			_delay_us(2);\
-			PORTC &= ~(1<<PC1);\
+#define stepUp2() {\
+	if (sleeping) {\
+		wakeup();\
+		_delay_ms(100);\
+	}\
+	if (!sleeping) {\
+		positions[2]++;\
+		setDir2(true);\
+		setStep2;\
+		_delay_us(2);\
+		unsetStep2;\
+	}\
 }
 
-#define step2up {\
-positions[2]++;\
-set_direction(2,true);\
-			DDRA   |= (1<<DDA4);\
-			PORTA  |= (1<<PA4);\
-			_delay_us(2);\
-			PORTA &= ~(1<<PA4);\
+#define stepUp3() {\
+	if (sleeping) {\
+		wakeup();\
+		_delay_ms(100);\
+	}\
+	if (!sleeping) {\
+		positions[3]++;\
+		setDir3(true);\
+		setStep3;\
+		_delay_us(2);\
+		unsetStep3;\
+	}\
 }
 
-
-#define step3up {\
-positions[3]++;\
-set_direction(3,true);\
-			DDRA   |= (1<<DDA1);\
-			PORTA  |= (1<<PA1);\
-			_delay_us(2);\
-			PORTA &= ~(1<<PA1);\
+#define stepDown1() { \
+	if (sleeping) {\
+		wakeup();\
+		_delay_ms(100);\
+	}\
+	if (!sleeping) {\
+		positions[1]--;\
+		setDir1(false);\
+		setStep1;\
+		_delay_us(2);\
+		unsetStep1;\
+	}\
 }
+
+#define stepDown2() {\
+	if (sleeping) {\
+		wakeup();\
+		_delay_ms(100);\
+	}\
+	if (!sleeping) {\
+		positions[2]--;\
+		setDir2(false);\
+		setStep2;\
+		_delay_us(2);\
+		unsetStep2;\
+	}\
+}
+
+#define stepDown3() {\
+	if (sleeping) {\
+		wakeup();\
+		_delay_ms(100);\
+	}\
+	if (!sleeping) {\
+		positions[3]--;\
+		setDir3(false);\
+		setStep3;\
+		_delay_us(2);\
+		unsetStep3;\
+	}\
+}
+
+#define stepAllUp()   {positions[0]++; stepUp1();   stepUp2();   stepUp3();}
+#define stepAllDown() {positions[0]--; stepDown1(); stepDown2(); stepDown3();}
+
 
 // Execute one step up for each motor
-#define stepAllUp() {\
-	step1up;\
-	step2up;\
-	step3up;\
-	positions[0]++;\
-}
-
-// Execute one step down
-void stepDown(uint8_t driver) {
-	step(driver, false);
-}
-
-// Execute one step up for each motor
-void stepAllDown() {
-	stepDown(1);
-	stepDown(2);
-	stepDown(3);
-	positions[0]--;
-}
 
 
 static void uart_puts(const char *str);
@@ -367,26 +322,19 @@ void adcInit() {
 	// Set AVCC as reference
 	ADMUX = (1<<REFS0);
 
+	// Set AREF as reference
+	ADMUX = 0;
+
 	// Enable ADC, set free running, enable interrupt, set prescaler to 1/128
 	//ADCSRA = (1<<ADEN) | (1<<ADSC);
 	//ADCSRA = (1<<ADEN) | (1<<ADSC) | (1<<ADIE) | (1<<ADPS2) | (1<<ADPS1) | (1<<ADPS0);
-	ADCSRA = (1<<ADEN) | (1<<ADSC) | (0<<ADPS2) | (0<<ADPS1) | (0<<ADPS0);
-}
-
-/*!
- * Select the channel for the next conversion.
- */
-void adc_select_channel(const uint8_t channel) {
-	ADMUX = (ADMUX & ~(0x1F)) | (channel & 0x1F);
+	ADCSRA = (1<<ADEN) | (1<<ADSC) | (1<<ADPS2) | (1<<ADPS1) | (1<<ADPS0);
 }
 
 /*!
  * Start a conversion.
  */
-void adc_start_conversion(const uint8_t channel) {
-	adc_select_channel(channel);
-	ADCSRA |= (1<<ADSC);          // single conversion
-}
+#define adc_start_conversion() {ADCSRA |= (1<<ADSC);}          // single conversion
 
 /*!
  * Wait for the conversion to finish and return the result.
@@ -423,104 +371,47 @@ ISR(USART0_RX_vect) {
 /*!
  * Move down until all endstops are hit.
  */
-void gotoEndstops() {
-	int i = 0;
-	// Count the number of steps until endstop
-	if (!stop(1) || !stop(2) || !stop(3)) {
-		double moved = false;
-		for (i = 1; i <= 3; i++) {
-			if (!stop(i)) {
-				moved = true;
-				step(i, false);
-			}
-			else {
-				//			uart_put('0'+i);
-				switch (i) {
-					case 1: positions[1] = -MOTOR_1_OFFSET; break;
-					case 2: positions[2] = -MOTOR_2_OFFSET; break;
-					case 3: positions[3] = -MOTOR_3_OFFSET; break;
-				}
-			}
-		}
-		//			uart_puts("\r\n");
-		if (!moved) {
-			return;
-		}
-		//_delay_us(100);
-		wdt_reset();
-	}
-
-}
-
-/*!
- * Move up until no endstops are hit.
- */
-void leaveEndstops() {
-	int i = 0;
-	while (stop(1) || stop(2) || stop(3)) {
-		double moved = false;
-		for (i = 1; i <= 3; i++) {
-			if (!stop(i)) {
-				moved = true;
-				step(i, true);
-			}
-		}
-		if (!moved) {
-			break;
-		}
-		_delay_us(400);
-		wdt_reset();
-	}
-}
-
-// go <limit> steps up
-void goUp(const int limit) {
-	int i = 0;
-	int j = 0;
-	for (j=0; j < limit; j++) {
-		double moved = false;
-		for (i = 1; i <= 3; i++) {
-			step(i, true);
-		}
-		_delay_us(400);
-		wdt_reset();
-	}
+#define gotoEndstops() {\
+	if (!stop1) {\
+		stepDown1();\
+	}\
+	else {\
+		positions[1] = -MOTOR_1_OFFSET;\
+	}\
+	if (!stop2) {\
+		stepDown2();\
+	}\
+	else {\
+		positions[2] = -MOTOR_2_OFFSET;\
+	}\
+	if (!stop3) {\
+		stepDown3();\
+	}\
+	else {\
+		positions[3] = -MOTOR_3_OFFSET;\
+	}\
 }
 
 // True if user pressed button for moving up.
-bool buttonUp() {
-	return !(bool)(PINC & (1<<6));
-}
+#define buttonUp() (!(bool)(PINB & (1<<1)))
 
 // True if user pressed button for moving down.
-bool buttonDown() {
-	return !(bool)(PINC & (1<<4));
-}
+#define buttonDown() (!(bool)(PINB & (1<<3)))
 
 // True if user pressed button for tilting front down.
-bool buttonTiltFrontDown() {
-	return !(bool)(PINC & (1<<7));
-}
+#define buttonTiltFrontDown() (!(bool)(PINB & (1<<4)))
 
 // True if user pressed button for tilting front up.
-bool buttonTiltFrontUp() {
-	return !(bool)(PINC & (1<<3));
-}
+#define buttonTiltFrontUp() (!(bool)(PINB & (1<<0)))
 
 // True if user pressed button for leveling.
-bool buttonLevel() {
-	return !(bool)(PINC & (1<<5));
-}
+#define buttonLevel() (!(bool)(PINB & (1<<2)))
 
 // True if the user wants to got to the autofocus position
-bool buttonFocus() {
-	return !(bool)(PINB & (1<<0));
-}
+#define buttonFocus() (!(bool)(PIND & (1<<2)))
 
 // True if user wants to do an emergency movement
-bool buttonEmergency() {
-	return !(bool)(PINB & (1<<1));
-}
+#define buttonEmergency() (!(bool)(PIND & 1<<3))
 
 // Print the positions of the axis
 void printPositions() {
@@ -536,13 +427,38 @@ void printPositions() {
 /*!
  * Simple delay function for which the time does not need to be known at compile time.
  */
-void myDelayUs(uint8_t length) {
-	while (--length) {
-		_delay_us(1);
-	}
+#define myDelayUs(length) {uint16_t _myDelayUs_tmp = length; while (--_myDelayUs_tmp) {_delay_us(1);}}
+
+void initialize() {
+	DDRC |= (1<<DDC0); // DIR1
+	DDRC |= (1<<DDC1); // STEP1
+
+	DDRC |= (1<<DDC2); // DIR2
+	DDRC |= (1<<DDC3); // STEP2
+	
+	DDRC |= (1<<DDC4); // DIR3
+	DDRC |= (1<<DDC5); // STEP3
+	
+	// Joystick
+	DDRB &= 0;
+	PORTB |= 0xff;
+
+	// Buttons, LEDs and stuff
+	DDRD &= 0;
+	PORTD |= 0xff;
+
+	// Lower endstops and autofocus-endstop. No pullup for autofocus endstop (PA0)
+	DDRA &= 0;
+	PORTA |= 0b11111110;
+
+	// Set ADC used for switch as input and disable pullup
+	DDRA &= ~(1<<PA0);
+	PORTA &= ~(1<<PA0);
+
 }
 
 int main() {
+	initialize();
 	UBRR0H = UBRRH_VALUE;
 	UBRR0L = UBRRL_VALUE;
 
@@ -550,40 +466,7 @@ int main() {
 
 	UCSR0C = (1<<UCSZ00) | (1<<UCSZ01);
 
-	// Use default timer mode (no compare match, no pwm)
-	TCCR1A = 0;
-	// Clock select 001 for CPU_FREQ
-	TCCR1B = (0<<CS12) | (0<<CS11) | (1<<CS10);
 
-	TIMSK1 = (1<<TOIE1);
-
-
-	// Configure PD2 as input
-	DDRD = 0;
-	// Enable pullup for PD2, 6, 4, 3
-	PORTD = (1<<2) | (1<<3) | (1<<4) | (1<<6);
-
-	// Configure PC0 and PC1 as output
-	DDRC |= (1 << 0 | 1 << 1);
-	PORTC = 0;
-
-	// Configure PC3-7 as input with pullups enabled
-	PORTC |= (1<<3 | 1<<4 | 1<<5 | 1<<6 | 1<<7);
-
-	// Configure PB0 as input (gotoFocus button)
-	DDRB &= ~(1<<0);
-	PORTB |= (1<<0);
-
-	// Configure PB1 as input (emergency move button)
-	DDRB &= ~(1<<1);
-	PORTB |= (1<<1);
-
-
-	// Enable INT0 interrupts
-	EIMSK = (1<<INT0);
-
-	// Configure INT0 interrupt to trigger for falling edge
-	EICRA = (1<<ISC01);
 	// enable interrupts for the timer
 	sei();
 
@@ -606,75 +489,28 @@ int main() {
 		positions[i] = 0;
 	}
 
-
-	// enable drivers
-	enable();    
-
 	wdt_enable(WDTO_2S);
 
-
-	uart_puts("Starting up\r\n"); 
 /*
-
-	gotoEndstops();
-
-	uart_puts("Went to endstops once\r\n");
-	for (i=0; i < 10000 && (stop(1) || stop(2) || stop(3)); i++) {
-		if (moveAfterReset()) {
-			goUp(10);
-		}
-		wdt_reset();
-	}
-	gotoEndstops();
-	uart_puts("Went to endstops twice\r\n");
-
-	for (i=0; i < 10000 && (stop(1) || stop(2) || stop(3)); i++) {
-		if (moveAfterReset()) {
-			goUp(10);
-		}
-		wdt_reset();
-	}
-	gotoEndstops();
-	uart_puts("Went to endstops three times\r\n");
-
-	for (i=0; i < 10000 && (stop(1) || stop(2) || stop(3)); i++) {
-		if (moveAfterReset()) {
-			goUp(10);
-		}
-		wdt_reset();
-	}
-	gotoEndstops();
-	uart_puts("Went to endstops four times\r\n");
-
-	for (i = 0; i < 4; i++) {
-		positions[i] = 0;
-	}
-
-	for (i = 0; i < MOTOR_MAX_OFFSET; i++) {
-		if (moveAfterReset()) {
-			if (positions[1] < MOTOR_1_OFFSET) {
-				stepUp(1);
-			}
-			if (positions[2] < MOTOR_2_OFFSET) {
-				stepUp(2);
-			}
-			if (positions[3] < MOTOR_3_OFFSET) {
-				stepUp(3);
-			}
-			_delay_us(100);
-		}
+	for(;;i++) {
+		uart_bin(PINB);
+		uart_puts(" ");
+		uart_bin(PIND);
+		uart_puts(" ");
+		uart_hex16(i);
+		uart_puts("\r\n");
+		_delay_ms(1000);
 		wdt_reset();
 	}
 */
+
+	uart_puts("Starting up\r\n"); 
+	
 	for (i = 0; i < 4; i++) {
 		positions[i] = 0;
 	}
 
 	bool buttonLastTime = false;
-
-	// Set ADC used for switch as input and disable pullup
-	DDRA &= ~(1<<7 | 1<<6);
-	PORTA &= (1<<7 | 1<<6);
 
 	// Count the number of cycles the autofocus is stuck in mid-state
 	uint8_t mid_state_counter = 0;
@@ -705,25 +541,26 @@ int main() {
 
 	movement_counter = 0;
 	current_delay = INITIAL_DELAY;
-	for (;;) {
-		if (movement_counter > 200) {
-			current_delay--;
-			if (current_delay < MIN_DELAY) {
-				current_delay = MIN_DELAY;
-			}
-			movement_counter = 0;
-		}
-		movement_counter += current_delay;
-		stepAllUp();
-		myDelayUs(current_delay);
-		wdt_reset();
-	}
+	
+	initialize();
+	adcInit();
+	
+	adc_start_conversion();
+	uint16_t autofocus_result = adc_wait();
+
+	uint16_t no_movement_counter = 0;
 
 	for(i = 0;;i++){
 		wdt_reset();
-		adc_start_conversion(7);
-		myDelayUs(current_delay);
-		const uint16_t autofocus_result = adc_wait();
+		/*
+		for (i=0; i < current_delay; i++) {
+			_delay_us(1);
+		}
+		// */
+		#ifdef DEBUG
+		uart_hex16(current_delay);
+		uart_puts("\r\n");
+		#endif
 		// True if autofocus endstop not yet hit.
 		const bool autofocus_switch_clear = (autofocus_result <= OPEN_VALUE + INTERVAL_SIZE && autofocus_result >= OPEN_VALUE - INTERVAL_SIZE);
 		bool autofocus_clear = true;
@@ -731,7 +568,7 @@ int main() {
 		if (!autofocus_switch_clear) {
 			if (autofocus_hit_counter > 10) {
 				autofocus_clear = false;
-				if (i % 1000 == 0) {
+				if (i % 1024 == 0) {
 					uart_puts("Autofocus hit at: ");
 					printPositions();
 					autofocusPosition = positions[0];
@@ -767,35 +604,68 @@ int main() {
 			mid_state_counter = 0;
 			autofocus_hit_counter = 0;
 		}
-		if (!buffer_read) {
-			uart_puts("Received buffer:\r\n");
-			uart_puts(buffer);
-			uart_puts("\r\n");
-			buffer_read = true;
-		}
+		#ifdef BUTTONCOUNT
 		int8_t buttons = 0;
 		if (buttonUp()) {
 			buttons++;
+			#ifdef DEBUG
+			uart_puts("buttonUp()\r\n");
+			#endif
 		}
 		if (buttonDown()) {
 			buttons++;
+			#ifdef DEBUG
+			uart_puts("buttonDown()\r\n");
+			#endif
 		}
 		if (buttonTiltFrontUp()) {
 			buttons++;
+			#ifdef DEBUG
+			uart_puts("buttonTiltFrontUp()\r\n");
+			#endif
 		}
 		if (buttonTiltFrontDown()) {
 			buttons++;
+			#ifdef DEBUG
+			uart_puts("buttonTiltFrontDown()\r\n");
+			#endif
 		}
 		if (buttonLevel()) {
 			buttons++;
+			#ifdef DEBUG
+			uart_puts("buttonLevel()\r\n");
+			#endif
 		}
 		if (buttonFocus()) {
 			buttons++;
+			#ifdef DEBUG
+			uart_puts("buttonFocus()\r\n");
+			#endif
 		}
 		if (buttonLastTime && (buttons != 1)) {
 			printPositions();
 			uart_puts("\r\n");
 		}
+		#ifdef DEBUG
+		if (buttonEmergency()) {
+			uart_puts("buttonEmergency()\r\n");
+		}
+		if (anyStopReached()) {
+			uart_puts("anyStopReached()\r\n");
+		}
+		if (stop1) {
+			uart_puts("stop1\r\n");
+		}
+		if (stop2) {
+			uart_puts("stop2\r\n");
+		}
+		if (stop3) {
+			uart_puts("stop3\r\n");
+		}
+		#endif
+		#else
+		int8_t buttons = 1;
+		#endif
 		movement = NONE;
 		if (buttons == 1 && !buttonEmergency()) {
 			buttonLastTime = true;
@@ -813,33 +683,36 @@ int main() {
 			}
 			if (buttonTiltFrontUp()) {
 				if (!anyStopReached() && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT) && autofocus_clear) {
-					stepUp(3);
-					stepDown(1);
+					stepUp3();
+					stepDown1();
 					movement = TILT_UP;
 				}
 			}
 			if (buttonTiltFrontDown()) {
 				if (!anyStopReached() && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT) && autofocus_clear) {
-					stepDown(3);
-					stepUp(1);
+					stepDown3();
+					stepUp1();
 					movement = TILT_DOWN;
 				}
 			}
 			if (buttonLevel()) {
 				if (!anyStopReached() && autofocus_clear) {
 					if (positions[1] > positions[3]+1) {
-						stepDown(1);
-						stepUp(3);
+						stepDown1();
+						stepUp3();
 						movement = LEVEL;
 					}
 					else if (positions[1]+1 < positions[3]) {
-						stepDown(3);
-						stepUp(1);
+						stepDown3();
+						stepUp1();
 						movement = LEVEL;
 					}
 				} 
 			}
 			if (buttonFocus()) {
+				#ifdef DEBUG
+					printPositions();
+				#endif
 				if ((positions[0] > autofocusPosition - FOCUS_DISTANCE) && !anyStopReached()) {
 					stepAllDown();
 					movement = DOWN;
@@ -871,48 +744,62 @@ int main() {
 
 		// Do all the emergency stuff
 		if (buttonEmergency()) {
+			_delay_us(17);
 			if (buttonEmergency() && buttonFocus()) {
 				gotoEndstops();
 			}
 			if (buttonUp()) {
 				if (buttonTiltFrontDown()) {
-					stepUp(1);
+					stepUp1();
 				}
 				if (buttonLevel()) {
-					stepUp(2);
+					stepUp2();
 				}
 				if (buttonTiltFrontUp()) {
-					stepUp(3);
+					stepUp3();
 				}
 			}
 			if (buttonDown()) {
 				if (buttonTiltFrontDown()) {
-					stepDown(1);
+					stepDown1();
 				}
 				if (buttonLevel()) {
-					stepDown(2);
+					stepDown2();
 				}
 				if (buttonTiltFrontUp()) {
-					stepDown(3);
+					stepDown3();
 				}
 				
 			}
 			if (buttonLevel()) {
 				int32_t maxPosition = max(positions[1], max(positions[2], positions[3]));
 				if (positions[1] < maxPosition) {
-					stepUp(1);
+					stepUp1();
 				}
 				if (positions[2] < maxPosition) {
-					stepUp(2);
+					stepUp2();
 				}
 				if (positions[3] < maxPosition) {
-					stepUp(3);
+					stepUp3();
 				}
 			}
 			
 		}
 
 		last_movement = movement;
+		if (movement == NONE) {
+			no_movement_counter++;
+			if (no_movement_counter > 50000) {
+				sleep();
+			}
+		}
+		else {
+			no_movement_counter = 0;
+		}
+		if(!(ADCSRA & (1<<ADSC))) {   // auf Abschluss der Konvertierung warten
+			autofocus_result = ADCW;
+			adc_start_conversion();
+		}
 	}
 
 }
