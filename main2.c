@@ -85,17 +85,17 @@ int32_t autofocusPosition;
 #define setDir1(dir) {\
 	if (dir) PORTC |= (1<<PC0); \
 	else PORTC &= ~(1<<PC0);\
-	_delay_us(1);\
+	_delay_us(0.3);\
 }
 #define setDir2(dir) {\
 	if (dir) PORTC |= (1<<PC2); \
 	else PORTC &= ~(1<<PC2);\
-	_delay_us(1);\
+	_delay_us(0.3);\
 }
 #define setDir3(dir) {\
 	if (dir) PORTC |= (1<<PC4); \
 	else PORTC &= ~(1<<PC4);\
-	_delay_us(1);\
+	_delay_us(0.3);\
 }
 
 // Test if one axis reached the height limit.
@@ -673,7 +673,7 @@ int main() {
 			}
 		}
 		if (movement == last_movement && movement != NONE) {
-			if (movement_counter > 400) {
+			if (movement_counter > 200) {
 				current_delay--;
 				if (current_delay < MIN_DELAY) {
 					current_delay = MIN_DELAY;
