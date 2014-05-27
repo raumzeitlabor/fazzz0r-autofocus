@@ -45,7 +45,7 @@
 #define CABLE_BROKEN_VALUE 770
 
 // Delay between two steps in micro seconds when starting to move.
-#define INITIAL_DELAY 50
+#define INITIAL_DELAY 200
 
 // Shortest delay between two steps allowed (i.e. fastest movement).
 #define MIN_DELAY 1
@@ -138,10 +138,6 @@ int32_t max(int32_t a, int32_t b) {
 #define anyStopReached() (stop1 || stop2 || stop3)
 
 #define stepUp1() { \
-	if (sleeping) {\
-		wakeup();\
-		_delay_ms(100);\
-	}\
 	if (!sleeping) { /* Don't touch! We need to check for externally forced sleeping! */\
 		positions[1]++;\
 		setDir1(true);\
@@ -150,10 +146,6 @@ int32_t max(int32_t a, int32_t b) {
 }
 
 #define stepUp2() {\
-	if (sleeping) {\
-		wakeup();\
-		_delay_ms(100);\
-	}\
 	if (!sleeping) {\
 		positions[2]++;\
 		setDir2(true);\
@@ -162,10 +154,6 @@ int32_t max(int32_t a, int32_t b) {
 }
 
 #define stepUp3() {\
-	if (sleeping) {\
-		wakeup();\
-		_delay_ms(100);\
-	}\
 	if (!sleeping) {\
 		positions[3]++;\
 		setDir3(true);\
@@ -174,10 +162,6 @@ int32_t max(int32_t a, int32_t b) {
 }
 
 #define stepDown1() { \
-	if (sleeping) {\
-		wakeup();\
-		_delay_ms(100);\
-	}\
 	if (!sleeping) {\
 		positions[1]--;\
 		setDir1(false);\
@@ -186,10 +170,6 @@ int32_t max(int32_t a, int32_t b) {
 }
 
 #define stepDown2() {\
-	if (sleeping) {\
-		wakeup();\
-		_delay_ms(100);\
-	}\
 	if (!sleeping) {\
 		positions[2]--;\
 		setDir2(false);\
@@ -198,10 +178,6 @@ int32_t max(int32_t a, int32_t b) {
 }
 
 #define stepDown3() {\
-	if (sleeping) {\
-		wakeup();\
-		_delay_ms(100);\
-	}\
 	if (!sleeping) {\
 		positions[3]--;\
 		setDir3(false);\
@@ -477,10 +453,11 @@ int main() {
 
 	adcInit();
 
-	int16_t i, j;
+	int16_t ii = 0;
+	int16_t jj = 0;
 
-	for (i = 0; i < 4; i++) {
-		positions[i] = 0;
+	for (ii = 0; ii < 4; ii++) {
+		positions[ii] = 0;
 	}
 
 	wdt_enable(WDTO_2S);
@@ -500,8 +477,8 @@ int main() {
 
 	uart_puts("Starting up\r\n"); 
 	
-	for (i = 0; i < 4; i++) {
-		positions[i] = 0;
+	for (ii = 0; ii < 4; ii++) {
+		positions[ii] = 0;
 	}
 
 	bool buttonLastTime = false;
@@ -510,11 +487,11 @@ int main() {
 	uint8_t mid_state_counter = 0;
 
 	// Count the number of successive movements in the same direction before increasing speed
-	uint8_t movement_counter = 0;
+	uint16_t movement_counter = 0;
 
-	uint8_t current_delay = INITIAL_DELAY;
+	uint16_t current_delay = INITIAL_DELAY;
 
-	enum movement{NONE, UP, DOWN, TILT_DOWN, TILT_UP, LEVEL} last_movement, movement;
+	enum movement{NONE, UP, DOWN, TILT_DOWN, TILT_UP, LEVEL, EMERGENCY} last_movement, movement;
 	last_movement = NONE;
 	movement = NONE;
 
@@ -544,11 +521,13 @@ int main() {
 
 	uint16_t no_movement_counter = 0;
 
-	for(i = 0;;i++){
+	for(ii = 0; ; ii++){
 		wdt_reset();
-		/*
-		for (i=0; i < current_delay; i++) {
-			_delay_us(1);
+		//*
+		if (current_delay > 1) {
+			for (jj = 0; jj < current_delay; jj++) {
+				_delay_us(1);
+			}
 		}
 		// */
 		#ifdef DEBUG
@@ -562,7 +541,7 @@ int main() {
 		if (!autofocus_switch_clear) {
 			if (autofocus_hit_counter > 10) {
 				autofocus_clear = false;
-				if (i % 1024 == 0) {
+				if ((ii % 1024) == 0) {
 					uart_puts("Autofocus hit at: ");
 					printPositions();
 					autofocusPosition = positions[0];
@@ -609,6 +588,7 @@ int main() {
 					stepAllDown();
 					movement = DOWN;
 				}
+				_delay_us(2.24);
 			}
 			if (buttonUp()) {
 				buttons++;
@@ -624,6 +604,7 @@ int main() {
 					stepDown1();
 					movement = TILT_UP;
 				}
+				_delay_us(5.84);
 			}
 			if (buttonTiltFrontDown()) {
 				buttons++;
@@ -632,6 +613,7 @@ int main() {
 					stepUp1();
 					movement = TILT_DOWN;
 				}
+				_delay_us(6.24);
 			}
 			if (buttonLevel()) {
 				buttons++;
@@ -647,8 +629,7 @@ int main() {
 						movement = LEVEL;
 					}
 				}
-				// Needed to fulfill the 2us hold constraint of the step pin
-				_delay_us(0.3);
+				_delay_us(7.4);
 			}
 			if (buttonFocus()) {
 				buttons++;
@@ -671,7 +652,7 @@ int main() {
 			}
 		}
 		if (movement == last_movement && movement != NONE) {
-			if (movement_counter > 200) {
+			if (movement_counter > 500) {
 				current_delay--;
 				if (current_delay < MIN_DELAY) {
 					current_delay = MIN_DELAY;
@@ -688,6 +669,7 @@ int main() {
 		// Do all the emergency stuff
 		if (buttonEmergency()) {
 			_delay_us(17);
+			movement = EMERGENCY;
 			if (buttonEmergency() && buttonFocus()) {
 				gotoEndstops();
 			}
@@ -733,12 +715,16 @@ int main() {
 		last_movement = movement;
 		if (movement == NONE) {
 			no_movement_counter++;
-			if (no_movement_counter > 50000) {
+			if (no_movement_counter > 2e3) {
 				sleep();
 			}
 		}
 		else {
 			no_movement_counter = 0;
+			if (sleeping) {
+				wakeup();
+				_delay_ms(100);
+			}
 		}
 		if(!(ADCSRA & (1<<ADSC))) {   // auf Abschluss der Konvertierung warten
 			autofocus_result = ADCW;
