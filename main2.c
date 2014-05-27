@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <avr/wdt.h>
+#include <limits.h>
 
 //#define DEBUG 1
 
@@ -456,10 +457,6 @@ int main() {
 	int16_t ii = 0;
 	int16_t jj = 0;
 
-	for (ii = 0; ii < 4; ii++) {
-		positions[ii] = 0;
-	}
-
 	wdt_enable(WDTO_2S);
 
 /*
@@ -481,8 +478,6 @@ int main() {
 		positions[ii] = 0;
 	}
 
-	bool buttonLastTime = false;
-
 	// Count the number of cycles the autofocus is stuck in mid-state
 	uint8_t mid_state_counter = 0;
 
@@ -496,7 +491,6 @@ int main() {
 	movement = NONE;
 
 	// Reset autofocus position
-	autofocusPosition = 0;
 
 	/*
 	   while(1) {  
@@ -520,6 +514,8 @@ int main() {
 	uint16_t autofocus_result = adc_wait();
 
 	uint16_t no_movement_counter = 0;
+	
+	autofocusPosition = 2*HEIGHT_LIMIT;
 
 	for(ii = 0; ; ii++){
 		wdt_reset();
@@ -578,50 +574,43 @@ int main() {
 			autofocus_hit_counter = 0;
 		}
 		movement = NONE;
-		buttonLastTime = false;
 		if (!buttonEmergency()) {
-			int8_t buttons = 0;
-			buttonLastTime = true;
 			if (buttonDown()) {
-				buttons++;
 				if (!anyStopReached()) {
 					stepAllDown();
 					movement = DOWN;
 				}
-				_delay_us(2.24);
+				_delay_us(2.08);
 			}
-			if (buttonUp()) {
-				buttons++;
+			else if (buttonUp()) {
 				if (!anyHeightLimitReached() && autofocus_clear) {
 					stepAllUp();
 					movement = UP;
 				}
 			}
-			if (buttonTiltFrontUp()) {
-				buttons++;
+			else if (buttonTiltFrontUp()) {
 				if (!anyStopReached() && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT) && autofocus_clear) {
 					stepUp3();
 					stepDown1();
 					movement = TILT_UP;
 				}
-				_delay_us(5.84);
+				_delay_us(0.96);
 			}
-			if (buttonTiltFrontDown()) {
-				buttons++;
+			else if (buttonTiltFrontDown()) {
 				if (!anyStopReached() && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT) && autofocus_clear) {
 					stepDown3();
 					stepUp1();
 					movement = TILT_DOWN;
 				}
-				_delay_us(6.24);
+				_delay_us(1.52);
 			}
-			if (buttonLevel()) {
-				buttons++;
+			else if (buttonLevel()) {
 				if (!anyStopReached() && autofocus_clear) {
 					if (positions[1] > positions[3]+1) {
 						stepDown1();
 						stepUp3();
 						movement = LEVEL;
+						_delay_us(0.72);
 					}
 					else if (positions[1]+1 < positions[3]) {
 						stepDown3();
@@ -629,26 +618,18 @@ int main() {
 						movement = LEVEL;
 					}
 				}
-				_delay_us(7.4);
+				_delay_us(2.22);
 			}
-			if (buttonFocus()) {
-				buttons++;
-				#ifdef DEBUG
-					printPositions();
-				#endif
-				if ((positions[0] > autofocusPosition - FOCUS_DISTANCE) && !anyStopReached()) {
+			else if (buttonFocus()) {
+				if ((positions[0] > (autofocusPosition - FOCUS_DISTANCE)) && !anyStopReached()) {
 					stepAllDown();
 					movement = DOWN;
 				}
+				else if ((positions[0] < (int32_t)(autofocusPosition - FOCUS_DISTANCE)) && autofocus_clear) {
+					stepAllUp();
+					movement = UP;
+				}
 				// Needed to fulfill the 2us hold constraint of the step pin
-				_delay_us(0.6);
-			}
-			if (buttons != 1) {
-				movement = NONE;
-				buttonLastTime = false;
-			}
-			else {
-				buttonLastTime = true;
 			}
 		}
 		if (movement == last_movement && movement != NONE) {
@@ -717,6 +698,9 @@ int main() {
 			no_movement_counter++;
 			if (no_movement_counter > 2e3) {
 				sleep();
+				no_movement_counter = 0;
+				printPositions();
+				uart_puts("\r\n");
 			}
 		}
 		else {
@@ -730,6 +714,7 @@ int main() {
 			autofocus_result = ADCW;
 			adc_start_conversion();
 		}
+		_delay_us(1.08);
 		unsetStep1;
 		unsetStep2;
 		unsetStep3;
