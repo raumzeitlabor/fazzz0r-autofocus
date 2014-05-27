@@ -142,12 +142,10 @@ int32_t max(int32_t a, int32_t b) {
 		wakeup();\
 		_delay_ms(100);\
 	}\
-	if (!sleeping) {\
+	if (!sleeping) { /* Don't touch! We need to check for externally forced sleeping! */\
 		positions[1]++;\
 		setDir1(true);\
 		setStep1;\
-		_delay_us(2);\
-		unsetStep1;\
 	}\
 }
 
@@ -160,8 +158,6 @@ int32_t max(int32_t a, int32_t b) {
 		positions[2]++;\
 		setDir2(true);\
 		setStep2;\
-		_delay_us(2);\
-		unsetStep2;\
 	}\
 }
 
@@ -174,8 +170,6 @@ int32_t max(int32_t a, int32_t b) {
 		positions[3]++;\
 		setDir3(true);\
 		setStep3;\
-		_delay_us(2);\
-		unsetStep3;\
 	}\
 }
 
@@ -188,8 +182,6 @@ int32_t max(int32_t a, int32_t b) {
 		positions[1]--;\
 		setDir1(false);\
 		setStep1;\
-		_delay_us(2);\
-		unsetStep1;\
 	}\
 }
 
@@ -202,8 +194,6 @@ int32_t max(int32_t a, int32_t b) {
 		positions[2]--;\
 		setDir2(false);\
 		setStep2;\
-		_delay_us(2);\
-		unsetStep2;\
 	}\
 }
 
@@ -216,8 +206,6 @@ int32_t max(int32_t a, int32_t b) {
 		positions[3]--;\
 		setDir3(false);\
 		setStep3;\
-		_delay_us(2);\
-		unsetStep3;\
 	}\
 }
 
@@ -658,7 +646,9 @@ int main() {
 						stepUp1();
 						movement = LEVEL;
 					}
-				} 
+				}
+				// Needed to fulfill the 2us hold constraint of the step pin
+				_delay_us(0.3);
 			}
 			if (buttonFocus()) {
 				buttons++;
@@ -669,6 +659,8 @@ int main() {
 					stepAllDown();
 					movement = DOWN;
 				}
+				// Needed to fulfill the 2us hold constraint of the step pin
+				_delay_us(0.6);
 			}
 			if (buttons != 1) {
 				movement = NONE;
@@ -734,7 +726,8 @@ int main() {
 					stepUp3();
 				}
 			}
-			
+			// In case of emergency, introduce a safe delay for the step hold time
+			_delay_us(2);
 		}
 
 		last_movement = movement;
@@ -751,6 +744,9 @@ int main() {
 			autofocus_result = ADCW;
 			adc_start_conversion();
 		}
+		unsetStep1;
+		unsetStep2;
+		unsetStep3;
 	}
 
 }
