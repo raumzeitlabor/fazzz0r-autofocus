@@ -604,84 +604,27 @@ int main() {
 			mid_state_counter = 0;
 			autofocus_hit_counter = 0;
 		}
-		#ifdef BUTTONCOUNT
-		int8_t buttons = 0;
-		if (buttonUp()) {
-			buttons++;
-			#ifdef DEBUG
-			uart_puts("buttonUp()\r\n");
-			#endif
-		}
-		if (buttonDown()) {
-			buttons++;
-			#ifdef DEBUG
-			uart_puts("buttonDown()\r\n");
-			#endif
-		}
-		if (buttonTiltFrontUp()) {
-			buttons++;
-			#ifdef DEBUG
-			uart_puts("buttonTiltFrontUp()\r\n");
-			#endif
-		}
-		if (buttonTiltFrontDown()) {
-			buttons++;
-			#ifdef DEBUG
-			uart_puts("buttonTiltFrontDown()\r\n");
-			#endif
-		}
-		if (buttonLevel()) {
-			buttons++;
-			#ifdef DEBUG
-			uart_puts("buttonLevel()\r\n");
-			#endif
-		}
-		if (buttonFocus()) {
-			buttons++;
-			#ifdef DEBUG
-			uart_puts("buttonFocus()\r\n");
-			#endif
-		}
-		if (buttonLastTime && (buttons != 1)) {
-			printPositions();
-			uart_puts("\r\n");
-		}
-		#ifdef DEBUG
-		if (buttonEmergency()) {
-			uart_puts("buttonEmergency()\r\n");
-		}
-		if (anyStopReached()) {
-			uart_puts("anyStopReached()\r\n");
-		}
-		if (stop1) {
-			uart_puts("stop1\r\n");
-		}
-		if (stop2) {
-			uart_puts("stop2\r\n");
-		}
-		if (stop3) {
-			uart_puts("stop3\r\n");
-		}
-		#endif
-		#else
-		int8_t buttons = 1;
-		#endif
 		movement = NONE;
-		if (buttons == 1 && !buttonEmergency()) {
+		buttonLastTime = false;
+		if (!buttonEmergency()) {
+			int8_t buttons = 0;
 			buttonLastTime = true;
 			if (buttonDown()) {
+				buttons++;
 				if (!anyStopReached()) {
 					stepAllDown();
 					movement = DOWN;
 				}
 			}
 			if (buttonUp()) {
+				buttons++;
 				if (!anyHeightLimitReached() && autofocus_clear) {
 					stepAllUp();
 					movement = UP;
 				}
 			}
 			if (buttonTiltFrontUp()) {
+				buttons++;
 				if (!anyStopReached() && !anyHeightLimitReached() && (positions[3]-positions[1] < TILT_LIMIT) && autofocus_clear) {
 					stepUp3();
 					stepDown1();
@@ -689,6 +632,7 @@ int main() {
 				}
 			}
 			if (buttonTiltFrontDown()) {
+				buttons++;
 				if (!anyStopReached() && !anyHeightLimitReached() && (positions[1]-positions[3] < TILT_LIMIT) && autofocus_clear) {
 					stepDown3();
 					stepUp1();
@@ -696,6 +640,7 @@ int main() {
 				}
 			}
 			if (buttonLevel()) {
+				buttons++;
 				if (!anyStopReached() && autofocus_clear) {
 					if (positions[1] > positions[3]+1) {
 						stepDown1();
@@ -710,6 +655,7 @@ int main() {
 				} 
 			}
 			if (buttonFocus()) {
+				buttons++;
 				#ifdef DEBUG
 					printPositions();
 				#endif
@@ -718,15 +664,14 @@ int main() {
 					movement = DOWN;
 				}
 			}
+			if (buttons != 1) {
+				movement = NONE;
+				buttonLastTime = false;
+			}
+			else {
+				buttonLastTime = true;
+			}
 		}
-		else {
-			buttonLastTime = false;
-		}
-		/*
-		if (buttons > 1) {
-			uart_puts("Multiple buttons pressed\r\n");
-		}
-		*/
 		if (movement == last_movement && movement != NONE) {
 			if (movement_counter > 400) {
 				current_delay--;
