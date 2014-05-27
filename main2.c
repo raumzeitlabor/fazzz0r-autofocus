@@ -83,19 +83,25 @@ int32_t autofocusPosition;
  * @param direction the new direction. True means up.
  */
 #define setDir1(dir) {\
-	if (dir) PORTC |= (1<<PC0); \
-	else PORTC &= ~(1<<PC0);\
-	_delay_us(0.3);\
+ 	if (dir != (bool) (PORTC & (1<<PC0))) {\
+		if (dir) PORTC |= (1<<PC0); \
+		else PORTC &= ~(1<<PC0);\
+		_delay_us(0.3);\
+	}\
 }
 #define setDir2(dir) {\
-	if (dir) PORTC |= (1<<PC2); \
-	else PORTC &= ~(1<<PC2);\
-	_delay_us(0.3);\
+ 	if (dir != (bool) (PORTC & (1<<PC2))) {\
+		if (dir) PORTC |= (1<<PC2); \
+		else PORTC &= ~(1<<PC2);\
+		_delay_us(0.3);\
+	}\
 }
 #define setDir3(dir) {\
-	if (dir) PORTC |= (1<<PC4); \
-	else PORTC &= ~(1<<PC4);\
-	_delay_us(0.3);\
+ 	if (dir != (bool) (PORTC & (1<<PC4))) {\
+		if (dir) PORTC |= (1<<PC4); \
+		else PORTC &= ~(1<<PC4);\
+		_delay_us(0.3);\
+	}\
 }
 
 // Test if one axis reached the height limit.
