@@ -1,7 +1,7 @@
 CC=avr-gcc
 CFLAGS += -DF_CPU=16000000UL
 CFLAGS += -mmcu=atmega644p
-CFLAGS += -O3
+CFLAGS += -Os
 MCU=atmega644p
 all: main2.o
 	avr-gcc -mmcu=atmega644p -o firmware $^
