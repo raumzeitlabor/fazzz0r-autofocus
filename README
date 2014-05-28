@@ -1,11 +1,1 @@
-Laser-Tischverstellung-Doku
-
-Die Tischverstellung soll an einer Aluminiumplatte befestigt werden. Die Arbeitsplatte ist 40cm x 30cm groß, also muss die Grundplatte mindestens 42cm x 32cm groß sein. 4mm Alu erscheinen angemessen.
-
-
-Pinbelegung der Taster:
-PC7: hoch
-PC6: runter
-PC5: vorne herunterkippen
-PC4: hinten herunterkippen
-PC3: Kippen in Normalstellung zurückfahren
+Eagle files and microcontroller firmware for autofocus bed
